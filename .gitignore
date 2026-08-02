@@ -35,5 +35,4 @@ node_modules/
 # Go test coverage
 coverage.out
 *.coverprofile
-docs/
-docs/*
+

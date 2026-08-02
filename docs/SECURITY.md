@@ -1,4 +1,4 @@
-# cred-share — Security Design (V0)
+# scopuli — Security Design (V0)
 
 > Reads with [`PLAN.md`](./PLAN.md) and [`ARCHITECTURE.md`](./ARCHITECTURE.md). Defines the threat model, justifies every cryptographic choice, and lists the security behaviors that must hold for V0 to ship.
 
@@ -13,7 +13,7 @@ We are explicit about what we're defending against and what we are **not**. This
 | Attacker | Capability | What they get |
 |---|---|---|
 | Disk thief | Pulls the LXC's disk or a backup of `/data` | A SQLCipher file. No master password. No KEK. |
-| Compromised agent key holder | Has a valid `csk_live_…` key | Access **only** to secrets inside their scope, **only** with their permission. Every access is logged. Key can be revoked instantly. |
+| Compromised agent key holder | Has a valid `sk_live_…` key | Access **only** to secrets inside their scope, **only** with their permission. Every access is logged. Key can be revoked instantly. |
 | Internet attacker (VPS deployment) | Reaches the public port | Can't authenticate without an operator token or agent key. Rate-limited. Every request is logged. |
 | LAN attacker | Reaches the LAN port | Same posture as internet attacker — the auth model is the same. |
 | Misconfigured backup | The vault file lands in an untrusted location | Useless without the master password OR the operator token. |
@@ -42,7 +42,7 @@ We are explicit about what we're defending against and what we are **not**. This
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ TRUSTED                        │ cred-share process          │
+│ TRUSTED                        │ scopuli process          │
 │  ┌───────────────────────────┐ │                             │
 │  │ MASTER_PASSWORD (env)    ─┼─▶ Argon2id → KEK (32B in RAM) │
 │  └───────────────────────────┘ │      │                      │
@@ -139,25 +139,52 @@ label       = optional human-readable label
 version     = monotonic integer, bumped on every write
 
 nonce       = 12 random bytes from crypto/rand
-aad         = SHA-256( path || "\x00" || label || "\x00" || uint64_be(version) )
+aad         = SHA-256( path || "\x00" || description || "\x00" || uint64_be(version) )
 
 ciphertext, tag = AES-256-GCM-Encrypt( KEK, nonce, plaintext, aad )
 
 INSERT INTO secrets (path, label, ciphertext, nonce, aad, version, …) VALUES (…)
 ```
 
-Binding the AAD to `path` and `version` means an attacker who swaps ciphertexts between two rows can't get away with it — the AAD won't match.
+Binding the AAD to `path`, **`description`**, and `version` means an attacker who swaps ciphertexts between two rows can't get away with it — the AAD won't match. **Consequence of including `description` in the AAD**: any edit to the description field triggers a re-encryption with a new nonce and a new AAD, and bumps `version`. This is intentional — it ties descriptions to the same trust boundary as the secret value, and makes description edits auditable as writes.
 
 ### 2.7 Secret decryption (read)
 
 Symmetric to 2.6. On a mismatch (wrong path in AAD, wrong version, GCM tag failure) the server returns 500 with no detail and logs `audit("error:decrypt_failed", path, key_id)`. We **never** leak whether the failure was a tag mismatch, an AAD mismatch, or a missing row — same error code for all three.
+
+### 2.7.1 Metadata fields — limits and validation
+
+The `tags`, `description`, and `metadata` fields on each resource are validated server-side at the application layer (not at the AEAD layer — the AEAD only sees `description`). Hard limits enforced on every write:
+
+| Field | Limit | Rationale |
+|---|---|---|
+| `tags` (CSV) | 20 entries, 64 chars each | A row is small. Cap kills some sloppy use cases for free. |
+| `description` | 8 KB | Markdown for humans + agents. Generous for examples and warnings. |
+| `metadata` (JSON object) | 32 pairs, key 64 chars, value 256 chars | Forces structured use; prevents "stash the whole secret in metadata" antipattern. |
+| `metadata` shape | Must be an object of strings; no nested objects, no arrays, no nulls | Schema-validated at every write. |
+
+Rejections return 400 with a structured error (`{"error": "metadata_too_large", "limit": 8192, "got": 12000}`). They do **not** leak the existing values.
+
+### 2.7.2 Metadata fields — information leak surface
+
+`description` and `metadata` are returned to API callers (alongside the secret value when authorized). Three rules govern what's safe to put there:
+
+1. **Do not put the secret value in `description` or `metadata`.** The whole point of the vault is that the value is encrypted at rest. Metadata is plain-text-at-rest inside the SQLCipher row. If the operator needs a hint, write the *shape* ("begins with `sk_live_`, 32 chars") not the contents.
+2. **Do not put PII in metadata unless you mean to.** An attacker with a stolen SQLCipher file (and the master password) will read metadata too. The threat model here is "the disk thief has your master password" — which is a fully-compromised scenario.
+3. **Description is bound to the AAD.** A description edit is a write, even if the value is unchanged. Operators should not edit descriptions frequently on hot secrets (the re-encryption is cheap, but it does add an audit row per edit).
+
+### 2.7.3 FTS5 index as a side channel
+
+The FTS5 index lives in the SQLCipher-encrypted database. It is not a separate file. A disk thief without the master password cannot read the index. Operators can confirm with `SELECT count(*) FROM secrets_fts;` after unlock.
+
+Tags (`secrets.tags`) are indexed via `LIKE` prefix matching on the live table. No hidden state.
 
 ### 2.8 Agent key design
 
 #### 2.8.1 Token format
 
 ```
-csk_live_<base62 of 24 random bytes>_<base62 of first 4 bytes of SHA-256(body)>
+sk_live_<base62 of 24 random bytes>_<base62 of first 4 bytes of SHA-256(body)>
 └─┬─┘└─┬──┘ └───────────────────┬─────────────────────┘ └─────────┬──────────────┘
   │    │                       │                                  │
   │    │                       │                                  └─ checksum (offline
@@ -165,21 +192,21 @@ csk_live_<base62 of 24 random bytes>_<base62 of first 4 bytes of SHA-256(body)>
   │    │                       │                                     credit card Luhn)
   │    │                       └─ body: the actual secret material
   │    └─ env: "live" only in V0 (no test mode)
-  └─ service prefix: "cred-share key"
+  └─ service prefix: "scopuli key"
 
 Total: ~45 characters. 24 bytes ≈ 192 bits of entropy plus a 4-byte checksum.
 ```
 
 Stored form:
 - `keys.hash`    = `hex(SHA-256(full_key))` — never reversible, used for lookups.
-- `keys.prefix`  = `"csk_live_" + first 8 chars of body` — used in the listing UI so the operator can tell keys apart.
+- `keys.prefix`  = `"sk_live_" + first 8 chars of body` — used in the listing UI so the operator can tell keys apart.
 
 The plaintext key is shown to the operator **exactly once** (the `POST /keys` response). It is never logged, never stored, never displayed again. Loss of the key = revoke + re-create.
 
 #### 2.8.2 Operator token format
 
 ```
-csot_live_<base64url of 32 random bytes>
+scot_live_<base64url of 32 random bytes>
 ```
 
 - 32 bytes ≈ 256 bits of entropy.
@@ -211,14 +238,14 @@ Glob matching: Go's `path.Match` with `*` wildcards. No `**`, no character class
 Single credential for the operator. Sent on every request:
 
 ```
-X-Cred-Share-Operator: csot_live_…
+X-Scopuli-Operator: scot_live_…
 ```
 
-Server validates by SHA-256-hashing the token and looking it up in the `operators` table. The CLI stores the token in macOS Keychain (via `github.com/zalando/go-keyring`) or Linux secret service. File-mode-locked fallback (`~/.config/cred-share/credentials`, mode 0600) if the keychain is unavailable.
+Server validates by SHA-256-hashing the token and looking it up in the `operators` table. The CLI stores the token in macOS Keychain (via `github.com/zalando/go-keyring`) or Linux secret service. File-mode-locked fallback (`~/.config/scopuli/credentials`, mode 0600) if the keychain is unavailable.
 
 ### 3.2 Agent API keys
 
-- Header: `X-Cred-Share-Key: csk_live_…_cRC4k1`
+- Header: `X-Scopuli-Key: sk_live_…_sRC4k1`
 - Server validates format → looks up by SHA-256 hash → checks expiry and revocation.
 - No session row created — each request is self-authenticating.
 - Constant-time comparison via `subtle.ConstantTimeCompare` on the hash lookup result.
@@ -237,6 +264,9 @@ Server validates by SHA-256-hashing the token and looking it up in the `operator
 - [ ] SQLCipher is opened with the **raw** KEK bytes, not a passphrase (`PRAGMA key = "x'…'"`).
 - [ ] Every secret write uses a fresh 12-byte random nonce from `crypto/rand`.
 - [ ] AES-256-GCM tag failures are not distinguishable from "not found" in API responses.
+- [ ] AAD is bound to `path`, `description`, and `version`; description edits trigger re-encryption and a `secret.annotate` audit row.
+- [ ] Metadata validation rejects over-limit fields at the API layer with structured 400 errors; no leakage of existing values.
+- [ ] FTS5 index is part of the SQLCipher-encrypted database (no side-channel file).
 - [ ] Every read/write/deny is appended to `audit` **before** the HTTP response is sent (within the same transaction where possible).
 - [ ] `audit verify` recomputes the hash chain + HMAC and flags the first broken row.
 - [ ] Agent keys are stored as SHA-256 only; the plaintext key is never logged, never written to disk.
@@ -270,7 +300,7 @@ Server validates by SHA-256-hashing the token and looking it up in the `operator
 9.  Operator token is unchanged (its hash is independent of the master password).
 ```
 
-Triggered via `cred-share operator rotate --from-env MASTER_PASSWORD` from inside the container. The CLI reads the new env var, prompts for the old master password (or reads it from a separate file), and triggers the rotation.
+Triggered via `scopuli operator rotate --from-env MASTER_PASSWORD` from inside the container. The CLI reads the new env var, prompts for the old master password (or reads it from a separate file), and triggers the rotation.
 
 Recovery if the operator forgets the master password: **none**. The KEK is gone. The audit log is gone. We document this in the README.
 
@@ -279,7 +309,7 @@ Recovery if the operator forgets the master password: **none**. The KEK is gone.
 If the operator token is leaked (or the operator wants to retire a device):
 
 ```
-docker exec -it cred-share cred-share operator rotate --from-env MASTER_PASSWORD
+docker exec -it scopuli scopuli operator rotate --from-env MASTER_PASSWORD
 # prints the new operator token ONCE
 ```
 
@@ -289,17 +319,17 @@ The new token's hash is written to the `operators` table; the old token is gone.
 
 **Backups** = either an `age`-encrypted export bundle, or a raw copy of the SQLCipher file. Both are useless without the master password.
 
-**`cred-share snapshot` flow:**
+**`scopuli snapshot` flow:**
 
 1. Server opens a SQLite read transaction.
 2. Server emits the SQLCipher file contents (or a JSON-encoded snapshot) to a writer.
 3. The writer encrypts the payload using `age` with a passphrase-derived X25519 key.
 4. The output is a single `.age` file.
 
-**`cred-share restore` flow:**
+**`scopuli restore` flow:**
 
 1. Operator stops the running container.
-2. Operator runs `cred-share restore --in bundle.age --into /data/vault.db`.
+2. Operator runs `scopuli restore --in bundle.age --into /data/vault.db`.
 3. The CLI decrypts the bundle with the passphrase, writes the SQLCipher file.
 4. Operator starts the container with the master password.
 

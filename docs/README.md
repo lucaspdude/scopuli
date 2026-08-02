@@ -1,8 +1,17 @@
-# cred-share — planning docs
+# scopuli — planning docs
 
-This folder is the planning + research artifact for the V0 (MVP) of `cred-share`.
+This folder is the planning + research artifact for the V0 (MVP) of `scopuli`.
 
 > No code yet. We're in the **research & planning phase**. Once you've reviewed these docs and answered the decisions in [`DECISIONS.md`](./DECISIONS.md), we'll start implementation.
+
+| File | Purpose |
+|---|---|
+| [`PLAN.md`](./PLAN.md) | MVP plan: what V0 is, what it isn't, must-haves, user flows, delivery plan. |
+| [`ARCHITECTURE.md`](./ARCHITECTURE.md) | How V0 is built: components, request flows, schema, deployment, config. |
+| [`SECURITY.md`](./SECURITY.md) | Threat model, cryptographic design, audit chain, hardening checklist. |
+| [`RESEARCH.md`](./RESEARCH.md) | Working notes from the research phase — sources read and why we picked what we picked. |
+| [`DECISIONS.md`](./DECISIONS.md) | Decision log: every decision made during planning, with rationale. |
+| [`PI-EXTENSION.md`](./PI-EXTENSION.md) | Plan for the `pi-coding-agent` extension (@scopuli/pi-extension). Status bar in V0 of the extension. |
 
 ## What's here
 

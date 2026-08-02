@@ -1,4 +1,4 @@
-# cred-share — Research notes
+# scopuli — Research notes
 
 > Working notes from the research phase. Not a spec; a digest of what we read and what we decided to keep / drop.
 
@@ -124,7 +124,7 @@ This document feeds [`PLAN.md`](./PLAN.md), [`ARCHITECTURE.md`](./ARCHITECTURE.m
 
 **Takeaways:**
 - Industry pattern: `prefix_body_checksum`.
-  - `prefix` identifies the service and the environment (`csk_live_…`).
+  - `prefix` identifies the service and the environment (`sk_live_…`).
   - `body` is the high-entropy secret material, generated from a CSPRNG.
   - `checksum` is a short hash of the body (e.g., first 4 bytes of SHA-256), enabling offline validity checks without hitting the DB.
 - **Storage: hash only.** SHA-256 of the full key. Show prefix in listings so the operator can identify a key by its first ~12 characters.
@@ -171,7 +171,7 @@ Out of scope for the security design but worth pinning down: when we say "agent"
 - Custom scripts you've written to do CI/CD, RSS digesting, etc.
 - Home automation controllers
 
-All of them are "I have a process I trust with a key; it needs to call `cred-share get aws/dev/…` from time to time." The MCP integration is the killer feature here because modern LLM runtimes already speak MCP natively — no shell-out, no parsing.
+All of them are "I have a process I trust with a key; it needs to call `scopuli get aws/dev/…` from time to time." The MCP integration is the killer feature here because modern LLM runtimes already speak MCP natively — no shell-out, no parsing.
 
 **Implication for design:** the API key auth path is **stateless and self-authenticating** (no session cookie, every request carries the key). This is friendlier to long-lived agents than a session-based flow would be.
 
@@ -196,3 +196,31 @@ If we end up needing any of these later, the rabbit holes are:
 - **Argon2id parameter tuning on the operator's specific hardware.** We picked reasonable defaults; once the binary exists, measure boot time and adjust `m` / `t` to hit a 250 ms target.
 - **SQLite WAL mode under SQLCipher.** WAL is normally a perf win; with SQLCipher, the encrypted WAL adds overhead. We default to `journal_mode=WAL` and measure.
 - **Constant-time logging.** Currently we log `key_id` and `path` for every request. If we ever log secret values by accident (we won't), that's the end of the project. Add a log-scrubbing test in CI.
+
+---
+
+## R11. FTS5 (full-text search) — chosen for V0
+
+**Decision:** SQLite FTS5 with `unicode61 remove_diacritics 2` tokenizer. Two virtual tables: `secrets_fts(path, description, metadata_text)` and `keys_fts(name, description, metadata_text)`. Triggers keep the FTS tables in sync on insert/update/delete.
+
+**Why FTS5 (not "filter by tag only"):** LLM agents need to *discover* the right secret. A `list --tag aws` dump is a haystack. FTS5 lets the agent query "rotated stripe production" and get BM25-ranked hits. With the corpus of a single operator (a few hundred secrets at most), the index is tiny and the search is sub-millisecond.
+
+**Trade-offs accepted:**
+- FTS5 in SQLCipher means the index is encrypted (good — no side-channel file). With a corpus of ~1000 secrets, the index is ~50-200 KB on disk. Negligible.
+- `metadata` is flattened (`k1=v1; k2=v2`) into the FTS index. Operationally, this means changing a metadata key re-tokenizes the row. We accept the cost.
+- FTS5 is part of the SQLite library since 3.9; the `mattn/go-sqlite3` driver we use ships with FTS5 enabled. No extra build flag.
+- The `unicode61` tokenizer is locale-aware but not multi-language. Sufficient for English/Portuguese labels. If we need better stemming we can add `porter` or `trigram` later.
+
+**Why not external (e.g., Meilisearch, Typesense):** Adds infrastructure. Single-operator, single-vault. The friction of running a sidecar search engine outweighs the marginal quality gain.
+
+## R12. pi-coding-agent extension — chosen for V0
+
+**Decision:** TypeScript package `@scopuli/pi-extension`, installed via `pi install npm:@scopuli/pi-extension`. V0 of the extension is **status bar only**. No slash commands, no tools exposed to the agent in V0. Roadmap v0.1 adds slash commands; v0.2 adds tools.
+
+**Why status bar only in V0:** The MCP server (`scopuli mcp-serve`) already gives the agent access to secrets. Duplicating that as pi tools is a surface-area leak for little gain. The extension's job is to make the *operator* aware of the vault's state without leaving the agent UI. Slash commands and tools come when we have user feedback on what the operator actually wants from the extension.
+
+**Why a separate npm package (not subdir in the binary):** The binary is Go; the extension is TypeScript. Two languages, two toolchains, two release cadences. Mixing them in one repo would force JavaScript-ecosystem tooling into the Go project (and vice versa). The extension is a sibling package.
+
+**References:**
+- [pi-coding-agent docs](https://github.com/lucaspdude/pi-coding-agent) — extension model, status bar API, slash command registration.
+- [skills](https://github.com/lucaspdude/pi-coding-agent/blob/main/docs/skills.md) — alternative distribution mechanism; we chose `extensions/` because status bars and tools aren't a "skill" in the pi sense.
