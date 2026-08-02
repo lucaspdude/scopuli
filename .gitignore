@@ -31,6 +31,8 @@ vendor/
 
 # Node (in case the web UI ever pulls in a build step)
 node_modules/
+extensions/pi/node_modules/
+extensions/pi/dist/
 
 # Go test coverage
 coverage.out
