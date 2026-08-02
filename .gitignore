@@ -1,0 +1,37 @@
+# Build artifacts
+/dist/
+/bin/
+/out/
+*.exe
+*.test
+*.out
+
+# Go
+# (Go doesn't really have build artifacts in-repo when building out-of-tree,
+# but keep these for IDE/tooling noise)
+vendor/
+
+# Local secrets — never commit the vault file
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Node (in case the web UI ever pulls in a build step)
+node_modules/
+
+# Go test coverage
+coverage.out
+*.coverprofile
