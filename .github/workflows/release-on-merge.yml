@@ -1,0 +1,84 @@
+# Auto-creates a GitHub release on push to main when the merge commit
+# contains a `[release]` marker. The release triggers `.github/workflows/release.yml`
+# which publishes the Docker image to ghcr.io and CLI binaries to the release.
+#
+# Usage (in the PR / merge commit message):
+#
+#   feat: my new feature [release]            # bumps patch from latest tag
+#   feat: bigger feature [release minor]      # bumps minor
+#   feat!: breaking change [release major]    # bumps major
+#   ci: prod cut [release v0.1.0]            # explicit version
+#
+# Without `[release]`, this workflow does nothing — the merge is silent.
+
+name: release-on-merge
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: contains(github.event.head_commit.message, '[release')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute next version
+        id: version
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+
+          # 1. Explicit form: [release vX.Y.Z]
+          EXPLICIT=$(printf '%s' "$MSG" \
+            | grep -oE '\[release v[0-9]+\.[0-9]+\.[0-9]+\]' \
+            | head -1 \
+            | sed -E 's/\[release (v[0-9]+\.[0-9]+\.[0-9]+)\]/\1/')
+
+          # 2. Latest tag (default v0.0.0)
+          LATEST=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          LATEST=${LATEST:-v0.0.0}
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+
+          # 3. Determine next version
+          if [ -n "$EXPLICIT" ]; then
+            NEXT=$EXPLICIT
+          elif printf '%s' "$MSG" | grep -q '\[release major\]'; then
+            NEXT="v$((MAJOR + 1)).0.0"
+          elif printf '%s' "$MSG" | grep -q '\[release minor\]'; then
+            NEXT="v${MAJOR}.$((MINOR + 1)).0"
+          else
+            NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+
+          echo "latest=$LATEST"
+          echo "next=$NEXT"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          set -euo pipefail
+          # Idempotent: skip if the tag already exists.
+          if git rev-parse "$NEXT" >/dev/null 2>&1; then
+            echo "tag $NEXT already exists — nothing to do"
+            exit 0
+          fi
+
+          printf 'Creating release %s at %s\n' "$NEXT" "$GITHUB_SHA"
+          gh release create "$NEXT" \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            --verify-tag
