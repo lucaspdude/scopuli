@@ -68,6 +68,10 @@ func (s *Server) toolDefs() []toolList {
 		return map[string]any{"type": "string", "description": d}
 	}
 	obj := func(props map[string]any, req []string) map[string]any {
+		// MCP clients (zod) reject "required": null — always emit an array.
+		if req == nil {
+			req = []string{}
+		}
 		return map[string]any{
 			"type":       "object",
 			"properties": props,
