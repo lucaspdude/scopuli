@@ -1,0 +1,268 @@
+# Single-workflow release pipeline.
+#
+# On push to main, if the merge commit contains a `[release]` marker,
+# this workflow:
+#   1. Computes the next version (auto-bump from latest tag, or explicit).
+#   2. Builds the multi-arch Docker image and pushes to ghcr.io.
+#   3. Builds CLI binaries for 4 OS/arch combos (linux/macos × amd64/arm64).
+#   4. Creates a GitHub release with the binaries as assets.
+#
+# Usage (in the PR / merge commit message):
+#
+#   feat: my new feature [release]            # bumps patch from latest tag
+#   feat: bigger feature [release minor]      # bumps minor
+#   feat!: breaking change [release major]    # bumps major
+#   ci: prod cut [release v0.1.0]            # explicit version
+#
+# Without `[release]`, the workflow is silent — a normal PR merge.
+#
+# Why a single workflow: GitHub Actions won't trigger a workflow from
+# release_published when the release was created by another workflow
+# using the default GITHUB_TOKEN (loop prevention). Combining the jobs
+# into one workflow with `needs:` chains avoids that.
+
+name: release
+
+on:
+  push:
+    branches: [main]
+  # Manual re-trigger: rebuild binaries and upload to an existing release tag.
+  # Useful when a matrix entry (e.g. macos-13) times out in the queue and we
+  # want to add the missing binary to the v0.1.0 release without bumping
+  # the version.
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: 'Existing release tag to upload binaries to (e.g. v0.1.0). Leave empty to skip the release job.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # ----------------------------------------------------------------
+  # 1) Compute next version from commit marker + latest tag
+  # ----------------------------------------------------------------
+  version:
+    if: |
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.target_tag != '')
+    runs-on: ubuntu-latest
+    outputs:
+      next: ${{ steps.compute.outputs.next }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: compute
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+
+          # workflow_dispatch path: use the operator-supplied target_tag.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            NEXT="${{ inputs.target_tag }}"
+            echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # push path: compute from the [release] marker in the commit msg.
+          EXPLICIT=$(printf '%s' "$MSG" \
+            | grep -oE '\[release v[0-9]+\.[0-9]+\.[0-9]+\]' \
+            | head -1 \
+            | sed -E 's/\[release (v[0-9]+\.[0-9]+\.[0-9]+)\]/\1/')
+
+          LATEST=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          LATEST=${LATEST:-v0.0.0}
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+
+          if [ -n "$EXPLICIT" ]; then
+            NEXT=$EXPLICIT
+          elif printf '%s' "$MSG" | grep -q '\[release major\]'; then
+            NEXT="v$((MAJOR + 1)).0.0"
+          elif printf '%s' "$MSG" | grep -q '\[release minor\]'; then
+            NEXT="v${MAJOR}.$((MINOR + 1)).0"
+          else
+            NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+
+          echo "latest=$LATEST"
+          echo "next=$NEXT"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+
+  # ----------------------------------------------------------------
+  # 2) Multi-arch Docker image → ghcr.io/<owner>/scopuli:<tag> + :latest
+  # ----------------------------------------------------------------
+  docker:
+    needs: version
+    # Only rebuild the docker image on push. Dispatch (re-build for an
+    # existing release) doesn't touch the image.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/scopuli:${{ needs.version.outputs.next }}
+            ghcr.io/${{ github.repository_owner }}/scopuli:latest
+          labels: |
+            org.opencontainers.image.title=scopuli
+            org.opencontainers.image.description=Self-hosted credential vault for sharing scoped secrets with agents and humans
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.version=${{ needs.version.outputs.next }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            VERSION=${{ needs.version.outputs.next }}
+            COMMIT=${{ github.sha }}
+
+  # ----------------------------------------------------------------
+  # 3) CLI binaries (4 OS/arch combos, native runners, CGO+SQLCipher)
+  # ----------------------------------------------------------------
+  binaries:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            asset_name: scopuli-linux-amd64
+          - runs-on: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            asset_name: scopuli-linux-arm64
+          - # macos-14 (Intel Mac runner, macOS 14 Sonoma) has a less
+            # saturated queue than macos-13. We use continue-on-error
+            # so a stuck queue never blocks the other 3 binaries.
+            runs-on: macos-14
+            goos: darwin
+            goarch: amd64
+            asset_name: scopuli-darwin-amd64
+            continue-on-error: true
+          - runs-on: macos-latest
+            goos: darwin
+            goarch: arm64
+            asset_name: scopuli-darwin-arm64
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install CGO build deps (Linux)
+        if: matrix.goos == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config
+
+      - name: Build CLI
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
+        run: |
+          set -e
+          mkdir -p bin
+          go build -tags sqlite_fts5 \
+            -trimpath -buildvcs=true \
+            -ldflags="-s -w -X main.version=${{ needs.version.outputs.next }} -X main.commit=${{ github.sha }}" \
+            -o bin/${{ matrix.asset_name }} \
+            ./cmd/scopuli
+
+      - name: Package + checksum
+        run: |
+          set -e
+          cd bin
+          tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}
+          # Use sha256sum on Linux, shasum -a 256 on macOS (cross-platform).
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
+          else
+            shasum -a 256 ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: |
+            bin/${{ matrix.asset_name }}.tar.gz
+            bin/${{ matrix.asset_name }}.tar.gz.sha256
+          retention-days: 7
+
+  # ----------------------------------------------------------------
+  # 4) Aggregate + create GitHub release with binary assets
+  # ----------------------------------------------------------------
+  release:
+    needs: [version, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate combined checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
+
+      # On push: create a new release with auto-generated notes.
+      - name: Create release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.next }}
+          name: ${{ needs.version.outputs.next }}
+          generate_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/checksums.txt
+          fail_on_unmatched_files: true
+
+      # On dispatch: only upload binaries to the existing release (no new
+      # release created, no notes). Useful when a matrix entry (e.g.
+      # macos-13) was skipped and we want to add binaries retroactively.
+      - name: Upload binaries to existing release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.next }}
+          files: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/checksums.txt
+          fail_on_unmatched_files: true

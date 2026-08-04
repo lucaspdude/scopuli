@@ -1,0 +1,15 @@
+# Exclude VCS, build artifacts, and local-only files from the build context.
+.git
+.gitignore
+.DS_Store
+bin/
+coverage.out
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.age
+.idea/
+.vscode/
+node_modules/
+extensions/pi/node_modules/

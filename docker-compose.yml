@@ -1,0 +1,38 @@
+# scopuli docker-compose for local development.
+#
+# Usage:
+#   MASTER_PASSWORD=$(openssl rand -hex 32) docker compose up -d
+#   docker compose logs -f scopuli   # capture the operator token on first boot
+#   export SCOPULI_URL=http://127.0.0.1:8080 SCOPULI_KEY=<paste-from-logs>
+#   scopuli login $SCOPULI_URL --token $SCOPULI_KEY
+#   scopuli secret set example/hello --description "demo"
+
+services:
+  scopuli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: scopuli:dev
+    container_name: scopuli
+    restart: unless-stopped
+    environment:
+      MASTER_PASSWORD: ${MASTER_PASSWORD:?MASTER_PASSWORD must be set (e.g. export MASTER_PASSWORD=$(openssl rand -hex 32))}
+      SCOPULI_BIND: "0.0.0.0:8080"
+      SCOPULI_DB_PATH: "/data/vault.db"
+      SCOPULI_LOG_LEVEL: "info"
+    volumes:
+      - scopuli-data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "/scopuli", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  scopuli-data:
+    # Named volumes are created by Docker with the container's UID (65532
+    # for distroless nonroot), so perms are correct out of the box. If you
+    # switch to a bind mount, run `chown -R 65532:65532 /path/on/host`
+    # before `docker compose up`.

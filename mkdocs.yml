@@ -1,0 +1,39 @@
+site_name: scopuli
+site_description: Self-hosted credential vault for sharing scoped secrets with agents and humans.
+site_url: https://lucaspdude.github.io/scopuli/
+repo_url: https://github.com/lucaspdude/scopuli
+repo_name: lucaspdude/scopuli
+docs_dir: website
+
+theme:
+  name: material
+  language: en
+  palette:
+    - scheme: default
+      primary: blue grey
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue grey
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Install the CLI: install.md
+  - Deploy locally (Docker): deploy-local.md
+  - Deploy on a VPS: deploy-vps.md
+  - Security: security.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - toc:
+      permalink: true
