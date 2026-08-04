@@ -85,7 +85,7 @@ Highlights:
 
 ## Built with AI
 
-scopuli is openly **vibe-coded**: most of the code was written by LLM coding agents working from human-written design docs (threat model, architecture, delivery plan). The design decisions, security posture, and review are human-owned. The planning docs are kept outside the public repo; the [security model](https://lucaspdude.github.io/scopuli/security/) documents the guarantees the code must uphold — audit accordingly.
+scopuli was **entirely architected and built with AI** — design, threat model, code, tests, and this documentation were produced by LLM coding agents under human direction and review. This is disclosed deliberately. The planning docs are kept outside the public repo; the [security model](https://lucaspdude.github.io/scopuli/security/) documents the guarantees the code must uphold — audit accordingly.
 
 ## Releases
 

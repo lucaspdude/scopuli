@@ -42,7 +42,7 @@ scopuli secret set example/hello --value world --description "my first secret"
 
 ## Built with AI
 
-scopuli is openly **vibe-coded**: most of the code was written by LLM coding agents working from human-written design docs (threat model, architecture, delivery plan). The design decisions, security posture, and review are human-owned. The planning docs are kept private, but the intent is public — treat the [security model](security.md) as the contract and audit the code accordingly.
+scopuli was **entirely architected and built with AI** — design, threat model, code, tests, and these docs were produced by LLM coding agents under human direction and review. This is disclosed deliberately. The planning docs are kept private; treat the [security model](security.md) as the contract and audit the code accordingly.
 
 ## Project status
 
