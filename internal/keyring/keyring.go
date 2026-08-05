@@ -18,6 +18,13 @@ const (
 	account     = "default"
 )
 
+// service/acct are the live keychain coordinates; tests override them so
+// they never touch the operator's real entry.
+var (
+	service = serviceName
+	acct    = account
+)
+
 var ErrNoCredentials = errors.New("keyring: no credentials stored")
 
 // Credentials is the (url, token) pair.
@@ -34,7 +41,7 @@ func Save(homeDir string, c Credentials) error {
 		if err != nil {
 			return err
 		}
-		if err := keyring.Set(serviceName, account, string(payload)); err == nil {
+		if err := keyring.Set(service, acct, string(payload)); err == nil {
 			return nil
 		}
 		// Fall through to file on error.
@@ -45,13 +52,15 @@ func Save(homeDir string, c Credentials) error {
 // Load retrieves credentials.
 func Load(homeDir string) (Credentials, error) {
 	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
-		payload, err := keyring.Get(serviceName, account)
+		payload, err := keyring.Get(service, acct)
 		if err == nil {
 			var c Credentials
-			if err := json.Unmarshal([]byte(payload), &c); err != nil {
-				return Credentials{}, err
+			if err := json.Unmarshal([]byte(payload), &c); err == nil {
+				return c, nil
 			}
-			return c, nil
+			// A non-JSON payload means a foreign/corrupt entry (e.g. a
+			// manually-created Keychain item squatting on our slot): fall
+			// through to the file instead of failing hard.
 		}
 	}
 	return loadFile(homeDir)
@@ -60,7 +69,7 @@ func Load(homeDir string) (Credentials, error) {
 // Delete removes credentials.
 func Delete(homeDir string) error {
 	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
-		_ = keyring.Delete(serviceName, account)
+		_ = keyring.Delete(service, acct)
 	}
 	return os.Remove(credentialsPath(homeDir))
 }
