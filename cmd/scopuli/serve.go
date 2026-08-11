@@ -80,6 +80,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		LogLevel:     os.Getenv("SCOPULI_LOG_LEVEL"),
 		StartedAt:    time.Now(),
 		OperatorName: "primary",
+		SessionKey:   api.UISessionKey(kek),
 	}
 	httpSrv := &http.Server{
 		Addr:              bind,

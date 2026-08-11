@@ -17,6 +17,14 @@ build: $(BIN_DIR)/$(BINARY)
 $(BIN_DIR)/$(BINARY):
 	$(GO) build -tags sqlite_fts5 $(GOFLAGS) -ldflags='$(LDFLAGS)' -o $@ ./cmd/scopuli
 
+# Regenerate the embedded Tailwind CSS (shadcn tokens) for the web UI.
+# app.css is committed, so plain `make build` needs no Node toolchain; run
+# this whenever tailwind.input.css or the HTML templates change.
+.PHONY: css
+css:
+	@bunx --bun @tailwindcss/cli -i tailwind.input.css -o internal/api/assets/app.css --minify 2>/dev/null \
+	  || npx --yes @tailwindcss/cli -i tailwind.input.css -o internal/api/assets/app.css --minify
+
 .PHONY: test
 test:
 	$(GO) test -tags sqlite_fts5 -race -count=1 ./...

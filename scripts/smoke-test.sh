@@ -190,6 +190,91 @@ info "AUDIT list (last 5)"
 api GET '/api/audit?limit=5' | python3 -m json.tool > /dev/null
 green "✓ audit list renders"
 
+# --- web UI ------------------------------------------------------------
+# The htmx operator console. Auth uses the same master key (operator token).
+
+UI_COOKIE_JAR="/tmp/scopuli-ui-cookie"
+rm -f "$UI_COOKIE_JAR"
+
+info "UI: login page renders"
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$URL/ui/login")
+if [[ "$STATUS" != "200" ]]; then fail "ui/login = $STATUS, want 200"; fi
+if ! curl -fsS "$URL/ui/login" | grep -q "Master key"; then
+  fail "login page missing master key field"
+fi
+green "✓ login page renders"
+# NOTE: UI checks below capture curl output to a file before grepping —
+# `curl | grep -q` races: grep exits on first match and curl dies with
+# SIGPIPE, which `set -o pipefail` turns into a spurious failure.
+
+info "UI: wrong master key rejected (no session cookie)"
+STATUS=$(curl -s -c "$UI_COOKIE_JAR" -o /dev/null -w '%{http_code}' \
+  -d "token=scot_live_wrong" "$URL/ui/login")
+if [[ "$STATUS" != "200" ]]; then fail "bad login = $STATUS, want 200"; fi
+if grep -q scopuli_session "$UI_COOKIE_JAR"; then
+  fail "bad login must not issue a session cookie"
+fi
+green "✓ wrong master key rejected"
+
+info "UI: login with master key issues session"
+STATUS=$(curl -s -c "$UI_COOKIE_JAR" -o /dev/null -w '%{http_code}' \
+  -d "token=$OP_TOKEN" "$URL/ui/login")
+if [[ "$STATUS" != "302" ]]; then fail "login = $STATUS, want 302"; fi
+if ! grep -q scopuli_session "$UI_COOKIE_JAR"; then
+  fail "no session cookie in jar"
+fi
+green "✓ login issues session cookie"
+
+info "UI: dashboard renders"
+if ! curl -fsS -b "$UI_COOKIE_JAR" "$URL/ui/" | grep -q "Dashboard"; then
+  fail "dashboard did not render"
+fi
+green "✓ dashboard renders"
+UI_PAGE=""
+fetch_ui() { UI_PAGE=$(curl -fsS -b "$UI_COOKIE_JAR" "$1" 2>/dev/null) || true; }
+
+info "UI: secrets page lists vault secrets"
+fetch_ui "$URL/ui/secrets"
+if ! echo "$UI_PAGE" | grep -q "aws/prod/stripe"; then
+  fail "secrets page missing aws/prod/stripe"
+fi
+green "✓ secrets page renders"
+
+info "UI: create secret via htmx form"
+STATUS=$(curl -s -b "$UI_COOKIE_JAR" -H "HX-Request: true" -o /dev/null -w '%{http_code}' \
+  -d 'path=ui/smoke/test&value=ui_via_form&tags=ui,smoke' "$URL/ui/secrets")
+if [[ "$STATUS" != "200" ]]; then fail "ui secret create = $STATUS, want 200"; fi
+COUNT=$(api GET /api/secrets | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))')
+if [[ "$COUNT" != "4" ]]; then fail "expected 4 secrets after UI create, got $COUNT"; fi
+green "✓ UI secret creation writes through to the vault"
+
+info "UI: keys page lists agent keys"
+fetch_ui "$URL/ui/keys"
+if ! echo "$UI_PAGE" | grep -q "devkey"; then
+  fail "keys page missing devkey"
+fi
+green "✓ keys page renders"
+
+info "UI: audit page shows intact chain"
+fetch_ui "$URL/ui/audit"
+if ! echo "$UI_PAGE" | grep -q "Chain intact"; then
+  fail "audit page missing chain-intact banner"
+fi
+green "✓ audit page verifies chain"
+
+info "UI: mutation without htmx header rejected (CSRF)"
+STATUS=$(curl -s -b "$UI_COOKIE_JAR" -o /dev/null -w '%{http_code}' \
+  -d 'path=ui/csrf&value=x' "$URL/ui/secrets")
+if [[ "$STATUS" != "403" ]]; then fail "non-htmx mutation = $STATUS, want 403"; fi
+green "✓ CSRF guard rejects non-htmx mutations"
+
+info "UI: unauthenticated page access redirects to login"
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$URL/ui/")
+if [[ "$STATUS" != "302" ]]; then fail "ui/ unauthenticated = $STATUS, want 302"; fi
+green "✓ session guard redirects"
+
+rm -f "$UI_COOKIE_JAR"
+
 green ""
 green "==================================="
 green "  ALL SMOKE TESTS PASSED ✓"

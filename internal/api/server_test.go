@@ -43,6 +43,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 	srv := &Server{
 		Store: s, Audit: logger, KEK: kek,
 		Bind: ":0", LogLevel: "info", OperatorName: "primary",
+		SessionKey: UISessionKey(kek),
 	}
 	return srv, tok
 }

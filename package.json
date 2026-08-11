@@ -1,0 +1,9 @@
+{
+  "name": "scopuli-ui",
+  "private": true,
+  "description": "Build tooling for the scopuli web UI (Tailwind CSS v4). The Go build itself needs no Node — app.css is committed.",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  }
+}

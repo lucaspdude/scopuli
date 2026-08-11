@@ -1,0 +1,185 @@
+{{define "main"}}
+<div class="flex flex-col gap-4" {{if .Data.NewKey}}hx-on::load="document.getElementById('key-result-dialog')?.showModal()"{{end}}>
+  {{template "alert" .Alert}}
+
+  <div class="flex flex-wrap items-end justify-between gap-3">
+    <div class="flex flex-col gap-1">
+      <h1 class="text-2xl font-semibold tracking-tight">Keys</h1>
+      <p class="text-sm text-muted-foreground">Scoped API keys for agents — scopuli stores only a SHA-256 hash of each key</p>
+    </div>
+    <button type="button"
+            hx-get="/ui/keys/new" hx-target="#key-form-slot" hx-swap="innerHTML"
+            class="btn btn-default">
+      {{template "icon-plus" .}}
+      New key
+    </button>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-2">
+    <nav class="flex items-center gap-1 rounded-md bg-muted p-1" aria-label="Key status">
+      {{range $s := statusTabs}}
+      {{$href := printf "/ui/keys?status=%s" $s.ID}}
+      <a href="{{$href}}" hx-get="{{$href}}" hx-target="#keys-list" hx-swap="innerHTML" hx-push-url="true"
+         class="rounded-sm px-3 py-1.5 text-sm font-medium transition-colors {{if eq $s.ID $.Data.Status}}bg-background text-foreground shadow-sm{{else}}text-muted-foreground hover:text-foreground{{end}}">
+        {{$s.Label}}
+      </a>
+      {{end}}
+    </nav>
+    <div class="relative min-w-52 flex-1 sm:max-w-64">
+      <span class="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-muted-foreground">{{template "icon-search" .}}</span>
+      <input type="search" name="q" value="{{.Data.Query}}" autocomplete="off" placeholder="Search keys…"
+             hx-get="/ui/keys" hx-trigger="input changed delay:300ms, search"
+             hx-target="#keys-list" hx-swap="innerHTML" hx-push-url="true"
+             class="input pl-9" aria-label="Search keys">
+    </div>
+  </div>
+
+  {{if .Data.ShowForm}}
+  {{template "key-form" .Data.Form}}
+  {{end}}
+
+  <div id="keys-list" class="card">
+    {{if .Data.Keys}}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="border-b bg-muted/50">
+          <tr>
+            <th class="table-head">Name</th>
+            <th class="table-head">Prefix</th>
+            <th class="table-head">Scope</th>
+            <th class="table-head">Permissions</th>
+            <th class="table-head">Expires</th>
+            <th class="table-head">Last used</th>
+            <th class="table-head text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          {{range .Data.Keys}}
+          <tr class="transition-colors hover:bg-muted/40 {{if .Revoked}}opacity-60{{end}}">
+            <td class="table-cell">
+              <div class="flex items-center gap-2">
+                <span class="font-medium">{{.Name}}</span>
+                {{if .Revoked}}{{template "badge" uiBadge "destructive" "revoked"}}{{else if .Expired}}{{template "badge" uiBadge "muted" "expired"}}{{else}}{{template "badge" uiBadge "success" "active"}}{{end}}
+              </div>
+              {{if .Description}}<div class="mt-0.5 max-w-56 truncate text-xs text-muted-foreground">{{.Description}}</div>{{end}}
+            </td>
+            <td class="table-cell"><code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{.Prefix}}</code></td>
+            <td class="table-cell"><code class="font-mono text-xs">{{.Scope}}</code></td>
+            <td class="table-cell">{{template "badge" .PermissionBadge}}</td>
+            <td class="table-cell whitespace-nowrap text-xs text-muted-foreground">{{.Expires}}</td>
+            <td class="table-cell whitespace-nowrap text-xs text-muted-foreground">{{.LastUsed}}</td>
+            <td class="table-cell">
+              <div class="flex items-center justify-end gap-1">
+                {{if not .Revoked}}
+                <button type="button" title="Edit"
+                        hx-get="/ui/keys/edit?name={{urlq .Name}}" hx-target="#key-form-slot" hx-swap="innerHTML"
+                        class="btn btn-ghost btn-icon" aria-label="Edit {{.Name}}">
+                  {{template "icon-pencil" .}}
+                </button>
+                <form class="inline" hx-post="/ui/keys/revoke" hx-target="#main" hx-swap="innerHTML"
+                      hx-confirm="Revoke key {{.Name}}? Every agent using it will lose access immediately.">
+                  <input type="hidden" name="name" value="{{.Name}}">
+                  <button type="submit" title="Revoke" class="btn btn-ghost btn-icon hover:text-destructive" aria-label="Revoke {{.Name}}">
+                    {{template "icon-trash" .}}
+                  </button>
+                </form>
+                {{else}}
+                <span class="text-xs text-muted-foreground">—</span>
+                {{end}}
+              </div>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    {{template "empty" uiEmpty "No keys" "Issue a scoped key to let an agent (Claude Code, cron, MCP…) pull secrets."}}
+    {{end}}
+  </div>
+
+  <div id="key-form-slot"></div>
+
+  {{if .Data.NewKey}}
+  <dialog id="key-result-dialog" class="w-full">
+    <div class="flex flex-col gap-4 p-6">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-semibold tracking-tight">Key created</h2>
+          <p class="mt-0.5 text-sm text-muted-foreground">Copy it now — it is shown <span class="font-medium text-foreground">only once</span>. scopuli stores just a hash.</p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-icon" onclick="this.closest('dialog').close()" aria-label="Close">{{template "icon-x" .}}</button>
+      </div>
+      <code id="new-key-value" class="break-all rounded-md border bg-muted p-3 font-mono text-sm">{{.Data.NewKey}}</code>
+      <div class="flex justify-end gap-2">
+        <button type="button" class="btn btn-default" onclick="navigator.clipboard.writeText(document.getElementById('new-key-value').textContent); this.textContent='Copied'">Copy</button>
+        <form method="dialog"><button type="submit" class="btn btn-secondary">Done</button></form>
+      </div>
+    </div>
+  </dialog>
+  {{end}}
+</div>
+{{end}}
+
+{{/* key-form: inline create/edit panel. Data: uiKeyForm */}}
+{{define "key-form"}}
+<div id="key-form" class="card border-primary/30">
+  <div class="flex items-start justify-between border-b px-6 py-4">
+    <div>
+      <h2 class="text-base font-semibold tracking-tight">{{if .Editing}}Edit key{{else}}New key{{end}}</h2>
+      <p class="text-xs text-muted-foreground">Scope is a comma-separated list of path globs, e.g. <code class="font-mono">aws/*,github/*</code>. <code class="font-mono">*</code> matches one path segment.</p>
+    </div>
+    <button type="button" hx-get="/ui/keys" hx-target="#main" hx-swap="innerHTML"
+            class="btn btn-ghost btn-icon" aria-label="Close form">
+      {{template "icon-x" .}}
+    </button>
+  </div>
+  <form hx-post="/ui/keys" hx-target="#main" hx-swap="innerHTML" class="grid gap-4 p-6">
+    {{if .Editing}}<input type="hidden" name="original_name" value="{{.Name}}">{{end}}
+    <div class="grid gap-4 sm:grid-cols-2">
+      <div class="flex flex-col gap-1.5">
+        <label for="key-name" class="label">Name</label>
+        <input id="key-name" name="name" required {{if .Editing}}disabled{{end}} value="{{.Name}}"
+               placeholder="claude-code-main" class="input font-mono">
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <label for="key-expires" class="label">Expires in <span class="text-muted-foreground">(optional)</span></label>
+        <input id="key-expires" name="expires_in" value="{{.ExpiresIn}}" placeholder="720h or 30d" class="input">
+      </div>
+    </div>
+    <div class="flex flex-col gap-1.5">
+      <label for="key-scope" class="label">Scope</label>
+      <input id="key-scope" name="scope" required value="{{.Scope}}" placeholder="aws/*,github/*" class="input font-mono">
+      <p class="text-xs text-muted-foreground">Use <code class="font-mono">*</code> to grant everything.</p>
+    </div>
+    <div class="flex flex-col gap-1.5">
+      <label for="key-perms" class="label">Permissions</label>
+      <select id="key-perms" name="permissions" class="input">
+        <option value="read" {{if eq .Permissions "read"}}selected{{end}}>read — pull secrets inside scope</option>
+        <option value="manage" {{if eq .Permissions "manage"}}selected{{end}}>manage — read + write secrets inside scope</option>
+      </select>
+    </div>
+    <div class="grid gap-4 sm:grid-cols-2">
+      <div class="flex flex-col gap-1.5">
+        <label for="key-tags" class="label">Tags <span class="text-muted-foreground">(comma-separated)</span></label>
+        <input id="key-tags" name="tags" value="{{.Tags}}" placeholder="agent,prod" class="input">
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <label for="key-meta" class="label">Metadata <span class="text-muted-foreground">(JSON object of strings)</span></label>
+        <input id="key-meta" name="metadata" value="{{.Metadata}}" placeholder='{"owner":"alice"}' class="input font-mono">
+      </div>
+    </div>
+    <div class="flex flex-col gap-1.5">
+      <label for="key-desc" class="label">Description <span class="text-muted-foreground">(markdown, up to 8 KB)</span></label>
+      <textarea id="key-desc" name="description" rows="2" class="textarea" placeholder="Which agent runs this key? What does it access?">{{.Description}}</textarea>
+    </div>
+    {{template "alert" .Alert}}
+    <div class="flex justify-end gap-2">
+      <button type="button" hx-get="/ui/keys" hx-target="#main" hx-swap="innerHTML" class="btn btn-outline">Cancel</button>
+      <button type="submit" class="btn btn-default">
+        {{if .Editing}}{{template "icon-pencil" .}} Save changes{{else}}{{template "icon-plus" .}} Create key{{end}}
+      </button>
+    </div>
+  </form>
+</div>
+{{end}}

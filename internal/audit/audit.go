@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	scrypt "github.com/lucaspdude/scopuli/internal/crypto"
 	"github.com/lucaspdude/scopuli/internal/store"
@@ -162,7 +163,68 @@ func (l *Logger) List(ctx context.Context, sinceMS, keyID int64, limit int) ([]E
 	}
 	q += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, limit)
-	rows, err := l.store.DB().QueryContext(ctx, q, args...)
+	return scanAuditRows(l.store.DB(), ctx, q, args...)
+}
+
+// auditFilters builds the WHERE clause (+args) shared by Query and Count.
+// sinceMS filters by ts >= sinceMS, keyID filters by key actor id, and
+// actionSub is a case-insensitive substring match on the action column.
+func auditFilters(sinceMS, keyID int64, actionSub string) (string, []any) {
+	q := ` WHERE 1=1`
+	args := []any{}
+	if sinceMS > 0 {
+		q += ` AND ts >= ?`
+		args = append(args, sinceMS)
+	}
+	if keyID > 0 {
+		q += ` AND actor_kind = 'key' AND actor_id = ?`
+		args = append(args, keyID)
+	}
+	if actionSub != "" {
+		q += ` AND action LIKE ? ESCAPE '\'`
+		args = append(args, "%"+escapeLike(actionSub)+"%")
+	}
+	return q, args
+}
+
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
+
+// Query returns audit entries newest-first with optional filters. beforeID
+// > 0 pages to entries older than that id (cursor pagination for the web
+// UI, avoiding the duplicate/skip edge of ts-based paging). limit caps the
+// page.
+func (l *Logger) Query(ctx context.Context, beforeID, sinceMS, keyID int64, actionSub string, limit int) ([]Entry, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	q := `SELECT id, ts, actor_kind, actor_id, action, path, result FROM audit`
+	where, args := auditFilters(sinceMS, keyID, actionSub)
+	q += where
+	if beforeID > 0 {
+		q += ` AND id < ?`
+		args = append(args, beforeID)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	return scanAuditRows(l.store.DB(), ctx, q, args...)
+}
+
+// Count returns the number of audit entries matching the filters.
+func (l *Logger) Count(ctx context.Context, sinceMS, keyID int64, actionSub string) (int64, error) {
+	q := `SELECT COUNT(*) FROM audit`
+	where, args := auditFilters(sinceMS, keyID, actionSub)
+	q += where
+	var n int64
+	err := l.store.DB().QueryRowContext(ctx, q, args...).Scan(&n)
+	return n, err
+}
+
+// scanAuditRows reads audit rows from the given query into []Entry.
+func scanAuditRows(db *sql.DB, ctx context.Context, q string, args ...any) ([]Entry, error) {
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

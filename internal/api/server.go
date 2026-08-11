@@ -26,9 +26,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -52,6 +54,13 @@ type Server struct {
 	LogLevel     string
 	StartedAt    time.Time
 	OperatorName string
+
+	// SessionKey signs the web UI session cookies (derived from the KEK).
+	SessionKey []byte
+
+	uiOnce    sync.Once
+	uiSetsVal map[string]*template.Template // lazily parsed embedded UI sets
+	uiErr     error
 }
 
 // Routes builds a chi router with all scopuli endpoints.
@@ -64,6 +73,42 @@ func (s *Server) Routes() http.Handler {
 	r.Use(s.requestLogger)
 
 	r.Get("/healthz", s.handleHealthz)
+	r.Get("/ui", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
+	})
+
+	// Web UI: htmx + server-rendered fragments. All pages require a valid
+	// session cookie (issued after logging in with the master key); only
+	// /ui/login and /ui/assets are public.
+	r.Route("/ui", func(r chi.Router) {
+		r.Get("/assets/*", s.handleUIAssets)
+		r.Get("/login", s.handleUILoginPage)
+		r.Post("/login", s.handleUILogin)
+
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireUISession)
+			r.Get("/", s.handleUIDashboard)
+			r.Get("/secrets", s.handleUISecrets)
+			r.Get("/secrets/new", s.handleUISecretForm)
+			r.Get("/secrets/edit", s.handleUISecretForm)
+			r.Get("/secrets/value/*", s.handleUISecretValue)
+			r.Get("/keys", s.handleUIKeys)
+			r.Get("/keys/new", s.handleUIKeyForm)
+			r.Get("/keys/edit", s.handleUIKeyForm)
+			r.Get("/audit", s.handleUIAudit)
+			r.Get("/audit/older", s.handleUIAuditOlder)
+
+			// Mutations: htmx-only (HX-Request header) + session cookie.
+			r.Group(func(r chi.Router) {
+				r.Use(requireUIHX)
+				r.Post("/secrets", s.handleUISecretSave)
+				r.Post("/secrets/delete", s.handleUISecretDelete)
+				r.Post("/keys", s.handleUIKeySave)
+				r.Post("/keys/revoke", s.handleUIKeyRevoke)
+				r.Post("/logout", s.handleUILogout)
+			})
+		})
+	})
 
 	r.Route("/api", func(r chi.Router) {
 		r.Route("/secrets", func(r chi.Router) {

@@ -60,12 +60,15 @@ The deployment surface. The vault runs as a Docker container inside a Proxmox LX
 
 The vault is **safe to expose to any network** from day one. The auth model is operator-token-based; the master password never leaves the container. TLS termination is the operator's responsibility (documented but not built into the Go server). The threat model is the same whether the port is reachable from the LAN or the public internet.
 
+## Web UI
+
+The htmx operator console served at `/ui/`, embedded in the binary (templates + Tailwind CSS + vendored htmx, no extra services). The operator logs in with the **master key** (the operator token, exactly the credential the CLI uses). The server verifies it the same way as `X-Scopuli-Operator` and issues a 30-day HttpOnly session cookie, HMAC-SHA-256-signed with a key derived from the KEK (`UISessionKey`) — so sessions survive restarts and are invalidated automatically by `rotate-operator-token` (which re-derives the KEK). The master password itself never crosses the wire. The UI covers: dashboard, secrets (list/search/reveal/create/edit/delete), keys (issue/revoke/edit), and the audit log (hash-chain verification, filters, cursor pagination). Reveals and mutations are audited exactly like their API counterparts. Every UI mutation additionally requires the htmx `HX-Request` header (defense in depth on top of SameSite=Lax cookies). Styling is Tailwind v4 with shadcn/ui design tokens; regenerate `internal/api/assets/app.css` via `make css` (committed, so `go build` needs no Node).
+
 ## Out-of-scope resolution rules
 
 These are terms that are explicitly NOT defined in V0. They will land in V1+:
 - Multiple operators
 - Multi-host / remote MCP (Streamable HTTP) — V0 uses stdio MCP, with the CLI binary local to each host
-- Web UI / session cookies
 - Secret versioning / rollback
 - Replication / HA
 - Secret rotation policies

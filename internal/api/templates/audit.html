@@ -1,0 +1,130 @@
+{{define "main"}}
+<div class="flex flex-col gap-4">
+  {{template "alert" .Alert}}
+
+  <div class="flex flex-col gap-1">
+    <h1 class="text-2xl font-semibold tracking-tight">Audit log</h1>
+    <p class="text-sm text-muted-foreground">Append-only hash chain, HMAC-signed with a master-password-derived key</p>
+  </div>
+
+  {{if .Data.Verified}}
+  <div class="flex items-start gap-2.5 rounded-md border border-success/40 bg-success/5 px-4 py-3 text-sm text-success">
+    <span class="mt-0.5 shrink-0">{{template "icon-check" .}}</span>
+    <div>
+      <p class="font-medium">Chain intact</p>
+      <p class="mt-0.5 opacity-90">All {{.Data.Total}} entries verified against the SHA-256 hash chain and HMAC.</p>
+    </div>
+  </div>
+  {{else}}
+  <div class="flex items-start gap-2.5 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+    <span class="mt-0.5 shrink-0">{{template "icon-alert" .}}</span>
+    <div>
+      <p class="font-medium">Chain broken — tampering detected</p>
+      <p class="mt-0.5 opacity-90">Verification failed at entry #{{.Data.BrokenAt}}. Investigate immediately.</p>
+    </div>
+  </div>
+  {{end}}
+
+  <form id="audit-filters" class="flex flex-wrap items-center gap-2"
+        hx-get="/ui/audit" hx-target="#audit-list" hx-swap="innerHTML" hx-push-url="true"
+        hx-trigger="submit, change delay:300ms from:#audit-since, change delay:300ms from:#audit-key, input changed delay:400ms from:#audit-action">
+    <div class="flex items-center gap-2 rounded-md bg-muted p-1">
+      {{range $s := sinceTabs}}
+      <button type="submit" name="since" value="{{$s.ID}}"
+              class="rounded-sm px-3 py-1.5 text-sm font-medium transition-colors {{if eq $s.ID $.Data.Since}}bg-background text-foreground shadow-sm{{else}}text-muted-foreground hover:text-foreground{{end}}">
+        {{$s.Label}}
+      </button>
+      {{end}}
+    </div>
+    <input id="audit-key" name="key" value="{{.Data.FilterKey}}" placeholder="Key name…" autocomplete="off" class="input w-44">
+    <input id="audit-action" name="action" value="{{.Data.Action}}" placeholder="Action…" autocomplete="off" class="input w-44">
+    <span class="ml-auto text-xs text-muted-foreground">Showing {{len .Data.Rows}} of {{.Data.Total}} entries</span>
+  </form>
+
+  <div id="audit-list" class="card">
+    {{if .Data.Rows}}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="border-b bg-muted/50">
+          <tr>
+            <th class="table-head">ID</th>
+            <th class="table-head">Time</th>
+            <th class="table-head">Actor</th>
+            <th class="table-head">Action</th>
+            <th class="table-head">Path</th>
+            <th class="table-head text-right">Result</th>
+          </tr>
+        </thead>
+        <tbody id="audit-tbody" class="divide-y">
+          {{range .Data.Rows}}
+          <tr class="transition-colors hover:bg-muted/40">
+            <td class="table-cell whitespace-nowrap text-xs text-muted-foreground">#{{.ID}}</td>
+            <td class="table-cell whitespace-nowrap text-xs text-muted-foreground" title="{{fmtTime .TS}}">{{relTime .TS}}</td>
+            <td class="table-cell whitespace-nowrap">
+              <span class="inline-flex items-center gap-1.5">
+                {{if eq .ActorKind "operator"}}{{template "icon-shield" .}}{{else}}{{template "icon-keys" .}}{{end}}
+                <span class="font-mono text-xs">{{.Actor}}</span>
+              </span>
+            </td>
+            <td class="table-cell"><code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{.Action}}</code></td>
+            <td class="table-cell max-w-56 truncate font-mono text-xs text-muted-foreground">{{.Path}}</td>
+            <td class="table-cell text-right">{{template "badge" .ResultBadge}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    {{template "empty" uiEmpty "No matching entries" "Try widening the time range or clearing the filters."}}
+    {{end}}
+
+    <div id="audit-pager" class="border-t px-6 py-3">
+      {{if .Data.HasMore}}
+      <button type="button"
+              hx-get="/ui/audit/older?before={{.Data.NextID}}{{if .Data.FilterKey}}&amp;key={{urlq .Data.FilterKey}}{{end}}{{if .Data.Action}}&amp;action={{urlq .Data.Action}}{{end}}{{if ne .Data.Since "all"}}&amp;since={{.Data.Since}}{{end}}"
+              hx-target="#audit-pager" hx-swap="outerHTML"
+              class="btn btn-outline w-full">
+        Load older entries
+      </button>
+      {{else}}
+      <p class="text-center text-xs text-muted-foreground">End of log</p>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{/* audit-older: fragment returned for load-older. The tbody rows are swapped
+     out-of-band (appended into #audit-tbody); the pager div is the main swap
+     that replaces #audit-pager. Data: auditPageData */}}
+{{define "audit-older"}}
+<tbody id="audit-tbody" hx-swap-oob="beforeend">
+  {{range .Rows}}
+  <tr class="transition-colors hover:bg-muted/40">
+    <td class="table-cell whitespace-nowrap text-xs text-muted-foreground">#{{.ID}}</td>
+    <td class="table-cell whitespace-nowrap text-xs text-muted-foreground" title="{{fmtTime .TS}}">{{relTime .TS}}</td>
+    <td class="table-cell whitespace-nowrap">
+      <span class="inline-flex items-center gap-1.5">
+        {{if eq .ActorKind "operator"}}{{template "icon-shield" .}}{{else}}{{template "icon-keys" .}}{{end}}
+        <span class="font-mono text-xs">{{.Actor}}</span>
+      </span>
+    </td>
+    <td class="table-cell"><code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{.Action}}</code></td>
+    <td class="table-cell max-w-56 truncate font-mono text-xs text-muted-foreground">{{.Path}}</td>
+    <td class="table-cell text-right">{{template "badge" .ResultBadge}}</td>
+  </tr>
+  {{end}}
+</tbody>
+<div id="audit-pager">
+  {{if .HasMore}}
+  <button type="button"
+          hx-get="/ui/audit/older?before={{.NextID}}{{if .FilterKey}}&amp;key={{urlq .FilterKey}}{{end}}{{if .Action}}&amp;action={{urlq .Action}}{{end}}{{if ne .Since "all"}}&amp;since={{.Since}}{{end}}"
+          hx-target="#audit-pager" hx-swap="outerHTML"
+          class="btn btn-outline w-full">
+    Load older entries
+  </button>
+  {{else}}
+  <p class="text-center text-xs text-muted-foreground">End of log</p>
+  {{end}}
+</div>
+{{end}}

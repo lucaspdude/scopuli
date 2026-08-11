@@ -83,6 +83,16 @@ Highlights:
 - **Append-only audit log** with SHA-256 hash chain + HMAC-SHA-256, signed by a master-password-derived key.
 - **`pi-coding-agent` extension** under `extensions/pi/` (status bar in V0 of the extension).
 
+## Web UI
+
+scopuli ships with an operator console at `http://<host>:8080/ui/` — an htmx + Tailwind (shadcn-styled) dashboard compiled into the binary, so the distroless image and standalone binary need no extra services or Node toolchain. Log in with your **master key** (the operator token from first boot). From the UI you can:
+
+- browse **secrets** — masked by default, revealed on demand (each reveal is audited) — plus create, edit, and delete
+- issue scoped **agent keys** (the token is shown exactly once, in a copy-to-clipboard dialog), revoke them, and edit scope/permissions/expiry
+- inspect the **audit log** with hash-chain verification, actor/action filters, and cursor pagination
+
+Sessions are 30-day signed cookies derived from the KEK: they survive server restarts and are invalidated by `scopuli rotate-operator-token`. The master password never leaves the container.
+
 ## Built with AI
 
 scopuli was **entirely architected and built with AI** — design, threat model, code, tests, and this documentation were produced by LLM coding agents under human direction and review. This is disclosed deliberately. The planning docs are kept outside the public repo; the [security model](https://lucaspdude.github.io/scopuli/security/) documents the guarantees the code must uphold — audit accordingly.

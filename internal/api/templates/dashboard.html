@@ -1,0 +1,88 @@
+{{define "main"}}
+<div class="flex flex-col gap-6">
+  {{template "alert" .Alert}}
+
+  <div class="flex flex-col gap-1">
+    <h1 class="text-2xl font-semibold tracking-tight">Dashboard</h1>
+    <p class="text-sm text-muted-foreground">Overview of your vault, signed in as <span class="font-medium text-foreground">{{.Operator}}</span>.</p>
+  </div>
+
+  <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <a href="/ui/secrets" hx-get="/ui/secrets" hx-target="#main" hx-push-url="true"
+       class="card group p-5 transition-colors hover:bg-accent/50">
+      <div class="flex items-center justify-between text-muted-foreground">
+        <p class="text-sm font-medium">Secrets</p>
+        {{template "icon-secrets" .}}
+      </div>
+      <p class="mt-2 text-3xl font-semibold tracking-tight">{{.Data.Secrets}}</p>
+      <p class="mt-1 text-xs text-muted-foreground">encrypted at rest</p>
+    </a>
+    <a href="/ui/keys" hx-get="/ui/keys" hx-target="#main" hx-push-url="true"
+       class="card group p-5 transition-colors hover:bg-accent/50">
+      <div class="flex items-center justify-between text-muted-foreground">
+        <p class="text-sm font-medium">Active keys</p>
+        {{template "icon-keys" .}}
+      </div>
+      <p class="mt-2 text-3xl font-semibold tracking-tight">{{.Data.ActiveKeys}}</p>
+      <p class="mt-1 text-xs text-muted-foreground">{{.Data.RevokedKeys}} revoked</p>
+    </a>
+    <a href="/ui/audit" hx-get="/ui/audit" hx-target="#main" hx-push-url="true"
+       class="card group p-5 transition-colors hover:bg-accent/50">
+      <div class="flex items-center justify-between text-muted-foreground">
+        <p class="text-sm font-medium">Audit · 24h</p>
+        {{template "icon-activity" .}}
+      </div>
+      <p class="mt-2 text-3xl font-semibold tracking-tight">{{.Data.Audit24h}}</p>
+      <p class="mt-1 text-xs text-muted-foreground">hash-chained &amp; HMAC-signed</p>
+    </a>
+    <div class="card p-5">
+      <div class="flex items-center justify-between text-muted-foreground">
+        <p class="text-sm font-medium">Vault</p>
+        {{template "icon-shield" .}}
+      </div>
+      <p class="mt-2 text-3xl font-semibold tracking-tight">up</p>
+      <p class="mt-1 text-xs text-muted-foreground">operator console</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex items-center justify-between border-b px-6 py-4">
+      <div>
+        <h2 class="text-base font-semibold tracking-tight">Recent activity</h2>
+        <p class="text-xs text-muted-foreground">Latest audit entries</p>
+      </div>
+      <a href="/ui/audit" hx-get="/ui/audit" hx-target="#main" hx-push-url="true" class="btn btn-ghost btn-sm">View all</a>
+    </div>
+    {{if .Data.Recent}}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="border-b bg-muted/50">
+          <tr>
+            <th class="table-head">Time</th>
+            <th class="table-head">Actor</th>
+            <th class="table-head">Action</th>
+            <th class="table-head">Path</th>
+            <th class="table-head text-right">Result</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          {{range .Data.Recent}}
+          <tr class="transition-colors hover:bg-muted/40">
+            <td class="table-cell whitespace-nowrap text-xs text-muted-foreground">{{relTime .TS}}</td>
+            <td class="table-cell whitespace-nowrap">
+              <span class="font-mono text-xs">{{.Actor}}</span>
+            </td>
+            <td class="table-cell"><code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{.Action}}</code></td>
+            <td class="table-cell max-w-52 truncate font-mono text-xs text-muted-foreground">{{.Path}}</td>
+            <td class="table-cell text-right">{{template "badge" .ResultBadge}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    {{template "empty" uiEmpty "No activity yet" "Actions like creating secrets or issuing keys will appear here."}}
+    {{end}}
+  </div>
+</div>
+{{end}}
