@@ -76,10 +76,14 @@ jobs:
           fi
 
           # push path: compute from the [release] marker in the commit msg.
+          # `|| true` keeps set -e happy when there is no explicit version —
+          # grep exits 1 on no match, which would otherwise abort the script
+          # before the [release major]/[release minor]/patch fallbacks.
           EXPLICIT=$(printf '%s' "$MSG" \
             | grep -oE '\[release v[0-9]+\.[0-9]+\.[0-9]+\]' \
             | head -1 \
-            | sed -E 's/\[release (v[0-9]+\.[0-9]+\.[0-9]+)\]/\1/')
+            | sed -E 's/\[release (v[0-9]+\.[0-9]+\.[0-9]+)\]/\1/' \
+            || true)
 
           LATEST=$(git tag --list 'v*' --sort=-v:refname | head -1)
           LATEST=${LATEST:-v0.0.0}
