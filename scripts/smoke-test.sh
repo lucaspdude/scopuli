@@ -273,6 +273,13 @@ STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$URL/ui/")
 if [[ "$STATUS" != "302" ]]; then fail "ui/ unauthenticated = $STATUS, want 302"; fi
 green "✓ session guard redirects"
 
+info "UI: domain root redirects browsers to the UI"
+STATUS=$(curl -s -H "Accept: text/html" -o /dev/null -w '%{http_code}' "$URL/")
+if [[ "$STATUS" != "302" ]]; then fail "root browser = $STATUS, want 302"; fi
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$URL/")
+if [[ "$STATUS" != "404" ]]; then fail "root api client = $STATUS, want 404"; fi
+green "✓ root redirects browsers, 404 for API clients"
+
 rm -f "$UI_COOKIE_JAR"
 
 green ""

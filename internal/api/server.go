@@ -73,6 +73,16 @@ func (s *Server) Routes() http.Handler {
 	r.Use(s.requestLogger)
 
 	r.Get("/healthz", s.handleHealthz)
+
+	// The domain root redirects browsers to the web UI; API clients (curl,
+	// the CLI) keep getting a plain 404 — this server is not a website.
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Accept"), "text/html") {
+			http.Redirect(w, r, "/ui/", http.StatusFound)
+			return
+		}
+		http.NotFound(w, r)
+	})
 	r.Get("/ui", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
 	})

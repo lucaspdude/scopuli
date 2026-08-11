@@ -59,6 +59,25 @@ func doUI(t *testing.T, srv *Server, method, path string, cookie *http.Cookie, f
 	return w
 }
 
+func TestUIRootRedirect(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	// A browser (Accept: text/html) hitting the domain root goes to the UI.
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/ui/" {
+		t.Fatalf("root browser: status=%d location=%q, want 302 /ui/", w.Code, w.Header().Get("Location"))
+	}
+
+	// API clients keep the plain 404.
+	w = doRequest(t, srv, "GET", "/", "", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("root api client: status = %d, want 404", w.Code)
+	}
+}
+
 func TestUILoginPageAndSessionGuard(t *testing.T) {
 	srv, op := newTestServer(t)
 
